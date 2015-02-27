@@ -217,9 +217,9 @@ class DocumentMover(object):
             )])
         needs_rename = len(unique_names) != len(all_attachment_ids)
         total = len(attachment_ids)
-        c = 0
+        counter = 0
         for attachment_id in attachment_ids:
-            c += 1
+            counter += 1
 
             # set storage to 'db' - makes the script resumable
             attachment = self.execute(
@@ -260,7 +260,7 @@ class DocumentMover(object):
             status = 'ok' if res else 'fail'
             msg = ("Moving attachment (id={}) {}/{} (status: "
                    "{{}})").format(
-                attachment_id, c, total)
+                attachment_id, counter, total)
             self.log(msg.format(status))
 
 
