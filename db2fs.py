@@ -175,13 +175,27 @@ class DocumentMover(object):
         # for Odoo 6.0 and 6.1
         self.pre_move_checks()
 
-        # create new 'filestore' storage:
-        new_storage_id = self.execute(
-            'document.storage', 'create',
-            {
-                'name': 'File Storage',
-                'type': 'filestore',
-                'path': self.args.filestore_path})
+        # read old db storage id for reuse in for-loop
+        old_storage_id = self.execute(
+            'document.storage', 'search',
+            [('type', '=', 'db')])[0]
+        # see if a 'filestore' storage exists already:
+        fs_storage_ids = self.execute(
+            'document.storage', 'search',
+            [
+                ('type', '=', 'filestore'),
+                ('path', '=', self.args.filestore_path)])
+        if len(fs_storage_ids):
+            # if so, use it:
+            new_storage_id = fs_storage_ids[0]
+        else:
+            # otherwise, create it:
+            new_storage_id = self.execute(
+                'document.storage', 'create',
+                {
+                    'name': 'File Storage',
+                    'type': 'filestore',
+                    'path': self.args.filestore_path})
 
         # set storage to 'filestore'
         dir_ids = self.execute(
@@ -189,24 +203,42 @@ class DocumentMover(object):
             [])
 
         self.log('Begin moving attachments')
+        # Only work on those that haven't been converted yet
         attachment_ids = self.execute(
-            'ir.attachment', 'search', [])
+            'ir.attachment', 'search',
+            [('db_datas', '!=', 'False')])
 
+        all_attachment_ids = self.execute(
+            'ir.attachment', 'search',
+            [])
+        unique_names = set([x['name'] for x in self.execute(
+            'ir.attachment', 'read',
+            all_attachment_ids, ['name']
+            )])
+        needs_rename = len(unique_names) != len(all_attachment_ids)
         total = len(attachment_ids)
-        c = 0  # counter
+        counter = 0
         for attachment_id in attachment_ids:
-            c += 1
+            counter += 1
 
+            # set storage to 'db' - makes the script resumable
+            attachment = self.execute(
+                'ir.attachment', 'read',
+                attachment_id, ['parent_id'])
+
+            dir_id = attachment['parent_id'][0]
+            # reset attachment to DB storage for reading
+            self.execute(
+                'document.directory', 'write',
+                [dir_id], {'storage_id': old_storage_id})
+
+            # load attachment
             attachment = self.execute(
                 'ir.attachment', 'read',
                 attachment_id, ['datas', 'parent_id', 'name'])
 
-            dir_id = attachment['parent_id'][0]
             data = attachment['datas']
 
-            dir = self.execute(
-                'document.directory', 'read', dir_id, ['storage_id'])
-            old_storage_id = dir['storage_id'][0]
 
             # set storage to 'filestore'
             self.execute(
@@ -218,25 +250,20 @@ class DocumentMover(object):
                 'datas': data,
                 'db_datas': False
             }
+            if needs_rename and not attachment['name'].startswith('attachment %d' % (attachment['id'], )):
+                vals.update({
+                    'name': 'attachment %d - %s' % (attachment_id, attachment['name'])
+                    })
             res = self.execute(
                 'ir.attachment', 'write',
                 [attachment_id], vals)
             status = 'ok' if res else 'fail'
             msg = ("Moving attachment (id={}) {}/{} (status: "
-                   "{{}}): {}").format(
-                attachment_id, c, total, attachment['name'])
+                   "{{}})").format(
+                attachment_id, counter, total)
             self.log(msg.format(status))
 
-            # set storage to 'filestore'
-            # don't ask me why I need to do this !!!:
-            self.execute(
-                'document.directory', 'write',
-                [dir_id], {'storage_id': old_storage_id})
 
-        for dir_id in dir_ids:
-            self.execute(
-                'document.directory', 'write',
-                [dir_id], {'storage_id': new_storage_id})
 
     def pre_move_checks(self):
         """preliminary checks"""
@@ -252,8 +279,6 @@ class DocumentMover(object):
         self.check_document_module_is_installed()
         self.install_document_module_if_needed()
         self.check_filestore_path()
-        self.check_storage_not_already_exist()
-        self.check_attachment_not_already_in_a_filestore()
 
     def check_document_module_is_installed(self):
         """check that 'document' module is installed"""
@@ -286,43 +311,6 @@ class DocumentMover(object):
             self.log(msg, out_to_err=True)
             sys.exit(ERROR_FILESTORE_PATH_DOES_NOT_EXIST)
 
-    def check_storage_not_already_exist(self):
-        # check that there is no already existing document.storage
-        # with the same type and path:
-        dom = [
-            ('type', '=', 'filestore'),
-            ('path', '=', self.args.filestore_path)]
-        existing_storage_id = self.execute(
-            'document.storage', 'search',
-            dom)
-        if existing_storage_id:
-            msg = ("A document.storage already exist (id={}) with the same "
-                   "type ({}) and path ({})").format(
-                ', '.join(map(str, existing_storage_id)),
-                'filestore',
-                self.args.filestore_path)
-            self.log(msg, out_to_err=True)
-            sys.exit(ERROR_DOCUMENT_STORAGE_ALREADY_EXIST)
-
-    def check_attachment_not_already_in_a_filestore(self):
-        # check that attachments are not already in a filestore
-        # if it's the case we're in trouble because we cannot move an
-        # attachment from one filestore to another. "Yes we can", but it's not
-        # the purpose of this script
-        check_storage_ids = self.execute(
-            'document.storage', 'search',
-            [('type', '=', 'filestore')])
-        check_directory_ids = self.execute(
-            'document.directory', 'search',
-            [('storage_id', 'in', check_storage_ids)])
-        check_attachment_ids = self.execute(
-            'ir.attachment', 'search',
-            [('parent_id', 'in', check_directory_ids)])
-        if check_attachment_ids:
-            msg = ("Some attachments are already linked to a 'filestore' "
-                   "storage.")
-            self.log(msg, out_to_err=True)
-            sys.exit(ERROR_ATTACHMENTS_ALREADY_IN_A_FILESTORE)
 
     def install_document_module_if_needed(self):
         if self.args.install_document_module:
