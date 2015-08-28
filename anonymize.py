@@ -87,6 +87,7 @@ class AnonymizationManager(object):
             self.cr.execute('BEGIN')
             self._run()
         except:
+            sys.stderr.write('Error -> rollbacking\n')
             self.cr.execute('ROLLBACK')
             raise
         else:
