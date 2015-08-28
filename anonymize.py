@@ -297,8 +297,8 @@ class AnonymizationManager(object):
 
         data = pickle.load(open(anonfilename))
 
-        sql_get_custom_fixes = """select * from ir_model_fields_anonymization_migration_fix where target_version = {}""".format(self.args.target)
-        self.cr.execute(sql_get_custom_fixes)
+        sql_get_custom_fixes = """select * from ir_model_fields_anonymization_migration_fix where target_version = %s"""
+        self.cr.execute(sql_get_custom_fixes, [self.args.target])
         fixes = self.cr.dictfetchall()
         fixes = self.group(fixes, ('model_name', 'field_name'))
 
