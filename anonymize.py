@@ -327,18 +327,22 @@ class AnonymizationManager(object):
                 }, 'sql')]
 
             for query in queries:
-                if query[1] == 'sql':
-                    sql = query[0]
-                    self.cr.execute(sql, {
-                        'value': line['value'],
-                        'id': line['id']
-                    })
-                elif query[1] == 'python':
-                    raw_code = query[0]
-                    code = raw_code % line
-                    eval(code)
-                else:
-                    raise Exception("Unknown query type '{0}'. Valid types are: sql, python.".format(query['query_type']))
+                try:
+                    if query[1] == 'sql':
+                        sql = query[0]
+                        self.cr.execute(sql, {
+                            'value': line['value'],
+                            'id': line['id']
+                        })
+                    elif query[1] == 'python':
+                        raw_code = query[0]
+                        code = raw_code % line
+                        eval(code)
+                    else:
+                        raise Exception("Unknown query type '{0}'. Valid types are: sql, python.".format(query['query_type']))
+                except Exception as exc:
+                    print "Error when processing line: {!r}".format(line)
+                    raise exc
 
         # update the anonymization fields:
         self.cr.execute("update ir_model_fields_anonymization set state = 'clear' where state <> 'not_existing'")
