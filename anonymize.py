@@ -217,6 +217,22 @@ class AnonymizationManager(object):
         fn = open(abs_filepath, 'w')
         pickle.dump(data, fn, pickle.HIGHEST_PROTOCOL)
 
+        anonfilename = os.path.expanduser(self.args.anonfilename)
+        if os.path.exists(anonfilename):
+            get_anonfilename = lambda base, i, ext: '{base}_{i}{ext}'.format(base=base, i=i, ext=ext)
+            i = 1
+            base, ext = os.path.splitext(anonfilename)
+            anonfilename = get_anonfilename(base=base, i=i, ext=ext)
+            while os.path.exists(anonfilename):
+                print anonfilename
+                i += 1
+                anonfilename = get_anonfilename(base=base, i=i, ext=ext)
+            msg = "Error: file {} already exist. Renaming it to {}\n".format(self.args.anonfilename, anonfilename)
+            sys.stderr.write(msg)
+
+        fn = open(anonfilename, 'w')
+        pickle.dump(data, fn, pickle.HIGHEST_PROTOCOL)
+
         # update the anonymization fields:
         self.cr.execute("update ir_model_fields_anonymization set state = 'anonymized' where state = 'clear'")
 
