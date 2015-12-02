@@ -148,7 +148,7 @@ class DocumentMover(object):
                     'ir.attachment', 'read',
                     [attachment_id], ['id', 'name', 'datas'])
                 attachment = attachments[0]
-                msg = ("Moving attachment (id={}) {}/{} (status: "
+                msg = (u"Moving attachment (id={}) {}/{} (status: "
                        "{{}}): {}").format(
                     attachment['id'], c, total, attachment['name'])
                 self.execute(
