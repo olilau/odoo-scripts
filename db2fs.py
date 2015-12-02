@@ -22,6 +22,7 @@ ERROR_DOCUMENT_NOT_INSTALLED = 6
 ERROR_ATTACHMENTS_ALREADY_IN_A_FILESTORE = 7
 ERROR_USER_NOT_ADMIN = 8
 ERROR_NO_DNS = 9
+ERROR_NO_CONNECTION = 10
 
 LOG_FMT = '%(asctime)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FMT)
@@ -41,7 +42,7 @@ group_connection.add_argument(
 only_one_of = group_connection.add_mutually_exclusive_group()
 only_one_of.add_argument(
     '--password', help="Odoo password (default: %(default)s)",
-    action='store', default='admin')
+    action='store', default=False)
 only_one_of.add_argument(
     '--ask-password', help="Ask for the Odoo password (default: %(default)s)",
     action='store_true', default=False)
@@ -467,6 +468,11 @@ class DocumentMover(object):
         sock_common = xmlrpclib.ServerProxy(url.format('xmlrpc/common'))
         self.uid = sock_common.login(self.dbname, self.args.user, self.pwd)
         self.sock = xmlrpclib.ServerProxy(url.format('xmlrpc/object'))
+        if not self.uid:
+            msg = "Error: Could not connect to server"
+            self.log(msg, out_to_err=True)
+            sys.exit(ERROR_NO_CONNECTION)
+
         if self.uid != 1:
             msg = ("You need to execute this script using the 'admin' user "
                    "(id=1) other users can have access restriction on "
