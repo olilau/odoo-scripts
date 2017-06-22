@@ -4,13 +4,13 @@
 import os
 import sys
 import argparse
-import psycopg2
-from psycopg2.psycopg1 import cursor as psycopg1cursor
 import datetime
 from itertools import groupby
 from operator import itemgetter
 import pickle
 import random
+import psycopg2
+from psycopg2.psycopg1 import cursor as psycopg1cursor
 
 __version__ = '0.1'
 
@@ -76,10 +76,10 @@ class AnonymizationManager(object):
 
     def column_exists(self, table, column):
         self.cr.execute("SELECT count(1)"
-            " FROM pg_class c, pg_attribute a"
-            " WHERE c.relname=%s"
-            " AND c.oid=a.attrelid"
-            " AND a.attname=%s", [table, column])
+                        " FROM pg_class c, pg_attribute a"
+                        " WHERE c.relname=%s"
+                        " AND c.oid=a.attrelid"
+                        " AND a.attname=%s", [table, column])
         return self.cr.fetchone()[0]
 
     def run(self):
@@ -106,15 +106,13 @@ class AnonymizationManager(object):
     def anonymize_database(self):
         # create a new history record:
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        vals = [
-            now,
-            now,
-            'started',
-            'clear -> anonymized',
-        ]
-        sql_insert_history = "insert into ir_model_fields_anonymization_history (create_uid, create_date, date, state, direction) values (1, %s, %s, %s, %s) returning id"
-        self.cr.execute(sql_insert_history, vals)
-
+        self.cr.execute("""\
+            insert into ir_model_fields_anonymization_history (
+                create_uid, create_date, date, state, direction
+            ) values (
+                1, %s, %s, %s, %s)
+            returning id""",
+                        [now, now, 'started', 'clear -> anonymized'])
         history_id, = self.cr.fetchone()
 
         # check that all the defined fields are in the 'clear' state
@@ -128,12 +126,15 @@ class AnonymizationManager(object):
 
         # do the anonymization:
         dirpath = os.environ.get('HOME') or os.getcwd()
-        rel_filepath = 'field_anonymization_{0}_{1}.pickle'.format(self.args.dbname, history_id)
-        abs_filepath = os.path.abspath(os.path.join(dirpath, rel_filepath))
-        if os.path.exists(abs_filepath):
-            msg = "Anonymization file {0} already exists\n"
-            sys.stderr.write(msg)
-            sys.exit(EXIT_FILE_ALREADY_EXISTS)
+        filepaths = [
+            os.path.abspath(self.args.anonfilename),
+            os.path.abspath(os.path.join(dirpath, 'field_anonymization_{0}_{1}.pickle'.format(self.args.dbname, history_id))),
+            ]
+        for filepath in filepaths:
+            if os.path.exists(filepath):
+                msg = "Anonymization file '{0}' already exists\n".format(filepath)
+                sys.stderr.write(msg)
+                sys.exit(EXIT_FILE_ALREADY_EXISTS)
 
         self.cr.execute("select * from ir_model_fields_anonymization where state <> 'not_existing'")
         fields = self.cr.dictfetchall()
@@ -195,7 +196,7 @@ class AnonymizationManager(object):
                     anonymized_value = '2011-11-11'
                 elif field_type == 'datetime':
                     anonymized_value = '2011-11-11 11:11:11'
-                elif field_type == 'float':
+                elif field_type in ('float', 'monetary'):
                     anonymized_value = 0.0
                 elif field_type == 'integer':
                     anonymized_value = 0
@@ -214,37 +215,24 @@ class AnonymizationManager(object):
                 })
 
         # save pickle:
-        fn = open(abs_filepath, 'w')
-        pickle.dump(data, fn, pickle.HIGHEST_PROTOCOL)
-
-        anonfilename = os.path.expanduser(self.args.anonfilename)
-        if os.path.exists(anonfilename):
-            get_anonfilename = lambda base, i, ext: '{base}_{i}{ext}'.format(base=base, i=i, ext=ext)
-            i = 1
-            base, ext = os.path.splitext(anonfilename)
-            anonfilename = get_anonfilename(base=base, i=i, ext=ext)
-            while os.path.exists(anonfilename):
-                print anonfilename
-                i += 1
-                anonfilename = get_anonfilename(base=base, i=i, ext=ext)
-            msg = "Error: file {} already exist. Renaming it to {}\n".format(self.args.anonfilename, anonfilename)
-            sys.stderr.write(msg)
-
-        fn = open(anonfilename, 'w')
-        pickle.dump(data, fn, pickle.HIGHEST_PROTOCOL)
+        for filepath in filepaths:
+            fn = open(filepath, 'w')
+            pickle.dump(data, fn, pickle.HIGHEST_PROTOCOL)
 
         # update the anonymization fields:
         self.cr.execute("update ir_model_fields_anonymization set state = 'anonymized' where state = 'clear'")
 
         # add a result message in the wizard:
         msgs = ["Anonymization successful.",
-               "",
-               "Do not forget to save the resulting file to a safe place because you will not be able to revert the anonymization without this file.",
-               "",
-               "This file is also stored in the {0} directory. The absolute file path is: {1}.",
-               "",
-              ]
-        msg = '\n'.join(msgs).format(dirpath, abs_filepath)
+                "",
+                "The anonmyzation file has been stored in '{chosen_file}'.",
+                "",
+                "This file is also stored in the '{home_directory}' directory. The absolute file path is: '{home_file}'.",
+                "",
+                "Do not forget to save the resulting file to a safe place because you will not be able to revert the anonymization without this file.",
+                ""]
+        msg = '\n'.join(msgs).format(
+            chosen_file=filepaths[0], home_directory=dirpath, home_file=filepaths[1])
         sys.stdout.write(msg)
 
         # update the history record:
@@ -350,22 +338,16 @@ class AnonymizationManager(object):
         # update the history record:
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         msg = "Successfully reversed the anonymization.\n"
-        vals = {
-            'write_date': now,
-            'date': now,
-            'id': history_id,
-            'msg': msg,
-        }
-        sql_update_history = """update ir_model_fields_anonymization_history set
-                                  write_uid = 1,
-                                  write_date = %(write_date)s,
-                                  date = %(date)s,
-                                  filepath = NULL,
-                                  msg = %(msg)s,
-                                  state = 'done'
-                                where id = %(id)s"""
-        self.cr.execute(sql_update_history, vals)
-
+        self.cr.execute("""
+            update ir_model_fields_anonymization_history set
+              write_uid = 1,
+              write_date = %(write_date)s,
+              date = %(date)s,
+              filepath = NULL,
+              msg = %(msg)s,
+              state = 'done'
+            where id = %(id)s""",
+                        {'write_date': now, 'date': now, 'id': history_id, 'msg': msg})
         sys.stdout.write(msg)
 
 
@@ -383,7 +365,7 @@ def _get_args(required):
                         help="Anonymization file", dest='anonfilename',
                        )
         g1.add_argument('+t', '+target', metavar="ODOO_VERSION", required=required,
-                        help="Version of Odoo", dest='target', choices=['7.0', '8.0']
+                        help="Version of Odoo", dest='target', choices=['7.0', '8.0', '9.0', '10.0']
                        )
     # END _add_required_args
 
